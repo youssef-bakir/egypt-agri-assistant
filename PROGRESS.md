@@ -17,8 +17,8 @@
 | Step | Status | Date | Notes |
 |------|--------|------|-------|
 | Step 1 — Setup | ✅ Done | 2026-10-27 | Folder structure, config, requirements, venv, first commit |
-| Step 2 — Get the data | 🔜 Next | — | Need Kaggle token (instructions below) |
-| Step 3 — Clean and split | ⏳ Pending | — | After Step 2 |
+| Step 2 — Get the data | ✅ Done | 2026-10-27 | 10 datasets downloaded (82,379 active original images), label_map updated, inventory.md generated |
+| Step 3 — Clean and split | 🔄 In Progress | — | Near-duplicate detection, split 70/15/15 + field_test + source_holdout, inclusion rule |
 | Checkpoint A | ⏳ Pending | — | After Step 3 |
 
 ---

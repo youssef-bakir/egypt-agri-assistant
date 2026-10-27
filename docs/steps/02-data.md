@@ -1,58 +1,44 @@
-# الخطوة 02 — الحصول على البيانات
+# الخطوة 02 — الحصول على البيانات (Data Collection & Inventory)
 
-## ماذا بنينا؟
+## ماذا بنينا وأنجزنا؟
 
-في هذه الخطوة نقوم بتحميل مجموعات البيانات من مصادر مختلفة وبناء فهرس (inventory) يوثّق محتواها.
+في هذه الخطوة تم تحميل وفهرسة مجموعات البيانات من مصادر حقيقية عبر Kaggle CLI، ثم توحيد التسميات (Label Mapping) وفحص الصور وإصدار تقرير الجرد الشامل `reports/inventory.md`.
 
-## ما تحتاجه للتشغيل
+## الأرقام الحقيقية للبيانات المجمعة (من الكود الفعلي)
 
-### Kaggle API Token (مطلوب)
+- **إجمالي الملفات المفحوصة:** 190,990 ملف
+- **النسخ المشتقة والمكررة المستبعدة (Augmented/Grayscale/Segmented):** 108,611 ملف (تم استبعاد نسخ Grayscale و Segmented من PlantVillage وفقاً لقواعد المشروع D4 والقسم 6)
+- **الصور الأصلية النشطة (Active Original Images):** 82,379 صورة
+- **صور المختبر (Lab):** 54,305 صورة (PlantVillage الأصلية الملونة)
+- **صور الحقل الحقيقية (Field):** 14,120 صورة (PlantDoc, Cucumber, Cotton, Mango, Wheat, Citrus, Rice)
+- **الصور السلبية (Negatives / Background / Soil):** 13,954 صورة
 
-1. افتح **https://www.kaggle.com** وسجّل الدخول
-2. اضغط على صورة حسابك ← **Settings** ← قسم **API** ← **Create New Token**
-3. ضع الملف المُنزَّل في: `C:\Users\<اسمك>\.kaggle\kaggle.json`
+## مصادر البيانات الفعلية على القرص
 
-### HuggingFace (لا يحتاج حساباً للمجموعات العامة)
+| المصدر | المعرّف (Dataset ID) | إجمالي الصور النشطة | المجال (Domain) |
+|--------|---------------------|--------------------|-----------------|
+| `plantvillage` | `abdallahalidev/plantvillage-dataset` | 54,305 | مختبر (Lab) |
+| `negatives` | `prasunroy/natural-images` | 13,798 | صور سلبية غير نباتية |
+| `mango` | `warcoder/mango-leaf-disease-dataset` | 4,000 | حقل (Field) |
+| `cucumber` | `kaushigihanml/cucumber-leaf-disease-dataset` | 3,754 | حقل (Field) |
+| `plantdoc` | `nirmalsankalana/plantdoc-dataset` | 2,922 | حقل (Field) |
+| `cotton` | `janmejaybhoi/cotton-disease-dataset` | 2,310 | حقل (Field) |
+| `citrus` | `myprojectdictionary/citrus-leaf-disease-image` | 607 | حقل (Field) |
+| `wheat` | `olyadgetch/wheat-leaf-dataset` | 407 | حقل (Field) |
+| `negatives_soil` | `prasanshasatpathy/soil-types` | 156 | تربة سلبية |
+| `rice` | `vbookshelf/rice-leaf-diseases` | 120 | حقل (Field) |
 
-## كيف تُشغّله؟
+## الأجزاء البرمجية المنجزة
 
-```bash
-# تفعيل البيئة
-.venv\Scripts\activate
+1. **`ml/label_map.py`**:
+   - قاموس صريح وشامل يربط أسماء المجلدات الخام بالتسميات المعيارية بصيغة `crop___condition`
+   - يدعم التسميات المقيدة بالمصدر (`source::label`) لحل أي تعارض في أسماء الفئات المشتركة مثل `Healthy`
+   - ربط الصور غير النباتية بفئة `unknown`
 
-# تثبيت أدوات التدريب (تشمل kaggle و huggingface_hub)
-pip install -r requirements-train.txt
+2. **`ml/inventory.py`**:
+   - مسح ذكي لجميع المجلدات الفرعية
+   - كشف النسخ المعالجة والمكررة واستبعادها تلقائياً
+   - إنتاج التقرير التفصيلي `reports/inventory.md` بأعداد كل فئة ومصدر ونطاق
 
-# تحميل جميع البيانات
-python ml/download_datasets.py --data-dir data/raw
-
-# بناء الفهرس
-python ml/inventory.py --data-dir data/raw
-```
-
-## البيانات المستهدفة
-
-| المجموعة | المصدر | المحاصيل المتوقعة | النوع |
-|----------|--------|-----------------|-------|
-| PlantVillage (أصلية بالألوان) | Kaggle: abdallahalidev/plantvillage-dataset | طماطم، بطاطس، فلفل، عنب، فراولة، ذرة، حمضيات | مختبر |
-| PlantDoc | Kaggle: pratikkayal/plantdoc-dataset | مختلطة | حقلي |
-| Multiple Plant Diseases | Kaggle: alinedobrovsky/plant-diseases-classification | خيار، بصل، قمح، أرز | مختلط |
-| Cotton Disease | Kaggle: janmejaybhoi/cotton-disease-dataset | قطن | مختبر |
-| Mango Leaf Disease | Kaggle: warcoder/mango-leaf-disease-dataset | مانجو | مختبر |
-| Citrus Leaves | Kaggle: dtrilsbeek/citrus-leaves | حمضيات | مختبر |
-| Rice Leaf Diseases | Kaggle: vbookshelf/rice-leaf-diseases | أرز | مختبر |
-| Wheat Disease | Kaggle: haidershabbirawan/wheat-disease-dataset | قمح | مختبر |
-| Cucumber Real-World | Kaggle: kareem25/cucumber-leaves-disease | خيار | حقلي |
-
-## الأجزاء الأساسية في الكود
-
-1. **`ml/label_map.py`** — يحوّل التسميات الخام من كل مجموعة بيانات إلى تنسيق موحّد: `"crop___condition"`
-2. **`ml/download_datasets.py`** — يُنزِّل كل مجموعة بيانات بالـ CLI تلقائياً
-3. **`ml/inventory.py`** — يمشي على كل الصور ويُنتج `reports/inventory.md`
-4. **`reports/inventory.md`** — يوثّق العدد الفعلي لكل فئة من كل مصدر (الأرقام الحقيقية)
-
-## الأخطاء الشائعة
-
-- **401 Unauthorized من Kaggle:** تأكد أن `kaggle.json` في المسار الصحيح: `C:\Users\<اسمك>\.kaggle\`
-- **بيانات ناقصة:** `ml/download_datasets.py` يُبلّغ بوضوح عن كل مجموعة فشل تحميلها
-- **لا ترفع مجلد `data/` على git** — مُدرج في `.gitignore`
+3. **اختبارات الوحدة**:
+   - `tests/test_label_map.py` اجتاز 8/8 اختبارات بنجاح

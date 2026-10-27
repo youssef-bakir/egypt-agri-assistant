@@ -9,13 +9,12 @@ Output: reports/inventory.md with:
   - corrupt files
   - size statistics
   - imbalance analysis
-  - augmented-copy detection (folders/filenames with 'aug')
+  - augmented-copy detection
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import re
 import sys
@@ -28,27 +27,29 @@ from ml.label_map import normalize, canonical_crop
 
 REPORTS_DIR = Path(__file__).parent.parent / "reports"
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
-AUG_PATTERNS = re.compile(r"aug|rotated|flipped|flip|rotate|augment", re.IGNORECASE)
+AUG_PATTERNS = re.compile(r"aug|rotated|flipped|flip|rotate|augment|grayscale|segmented", re.IGNORECASE)
 
 
 def is_augmented_path(path: Path) -> bool:
-    """Return True if the file or any parent folder looks like an augmented copy."""
+    """Return True if the file or any parent folder looks like an augmented/synthetic copy."""
     for part in path.parts:
         if AUG_PATTERNS.search(part):
             return True
     return False
 
 
-def guess_domain(path: Path) -> str:
-    """Guess lab vs field from path segments."""
-    path_str = str(path).lower()
-    if any(kw in path_str for kw in ["field", "wild", "real", "farm", "plantdoc", "plantwild"]):
-        return "field"
-    return "lab"
+def get_domain(source_name: str, path: Path) -> str:
+    """Determine domain: lab, field, or negatives."""
+    src = source_name.lower()
+    if src in ("negatives", "negatives_soil"):
+        return "negatives"
+    if src == "plantvillage":
+        return "lab"
+    return "field"
 
 
 def is_corrupt(path: Path) -> bool:
-    """Quick check: try to open the file header."""
+    """Check if the image file can be opened and verified by Pillow."""
     try:
         from PIL import Image
         with Image.open(path) as img:
@@ -58,12 +59,10 @@ def is_corrupt(path: Path) -> bool:
         return True
 
 
-def scan_dataset(
-    dataset_dir: Path,
-    source_name: str,
-) -> list[dict]:
+def scan_dataset(dataset_dir: Path, source_name: str) -> list[dict]:
     """Walk a dataset directory and collect per-image metadata."""
     records: list[dict] = []
+    
     for root, _dirs, files in os.walk(dataset_dir):
         root_path = Path(root)
         for fname in files:
@@ -71,19 +70,25 @@ def scan_dataset(
             if fpath.suffix.lower() not in IMAGE_EXTS:
                 continue
 
-            # The folder name relative to dataset_dir[1st level] is the raw label
-            rel = fpath.relative_to(dataset_dir)
-            raw_label = rel.parts[0] if len(rel.parts) > 1 else "unknown"
+            raw_label = fpath.parent.name
+            augmented = is_augmented_path(fpath)
+            domain = get_domain(source_name, fpath)
+            canonical = normalize(raw_label, source=source_name)
+
+            try:
+                size_bytes = fpath.stat().st_size
+            except OSError:
+                size_bytes = 0
 
             records.append({
                 "path": str(fpath),
                 "raw_label": raw_label,
-                "canonical": normalize(raw_label),
+                "canonical": canonical,
                 "source": source_name,
-                "domain": guess_domain(fpath),
-                "augmented": is_augmented_path(fpath),
-                "size_bytes": fpath.stat().st_size,
-                "corrupt": False,  # checked separately for speed
+                "domain": domain,
+                "augmented": augmented,
+                "size_bytes": size_bytes,
+                "corrupt": False,
             })
     return records
 
@@ -94,69 +99,79 @@ def build_report(records: list[dict]) -> str:
     augmented = sum(1 for r in records if r["augmented"])
     corrupt = sum(1 for r in records if r["corrupt"])
 
-    # Counts per canonical label
+    # Active original records (non-augmented)
+    active_records = [r for r in records if not r["augmented"]]
+    active_total = len(active_records)
+
+    # Counts per canonical label (active)
     label_counts: dict[str, int] = defaultdict(int)
-    for r in records:
+    for r in active_records:
         label_counts[r["canonical"]] += 1
 
-    # Counts per source
+    # Counts per source (active)
     source_counts: dict[str, int] = defaultdict(int)
-    for r in records:
+    for r in active_records:
         source_counts[r["source"]] += 1
 
-    # Counts per domain
+    # Counts per domain (active)
     domain_counts: dict[str, int] = defaultdict(int)
-    for r in records:
+    for r in active_records:
         domain_counts[r["domain"]] += 1
 
     lines: list[str] = [
         "# Dataset Inventory Report",
         "",
-        f"Generated automatically by `ml/inventory.py`.",
+        "Generated automatically by `ml/inventory.py`.",
         "",
         "## Summary",
         "",
-        f"| Metric | Count |",
-        f"|--------|-------|",
-        f"| Total images | {total:,} |",
-        f"| Augmented copies (excluded) | {augmented:,} |",
+        "| Metric | Count |",
+        "|--------|-------|",
+        f"| Total files found | {total:,} |",
+        f"| Augmented/derivative copies (flagged for exclusion) | {augmented:,} |",
+        f"| Active original images | {active_total:,} |",
         f"| Corrupt files | {corrupt:,} |",
-        f"| Lab images | {domain_counts['lab']:,} |",
-        f"| Field images | {domain_counts['field']:,} |",
+        f"| Lab images (active) | {domain_counts['lab']:,} |",
+        f"| Field images (active) | {domain_counts['field']:,} |",
+        f"| Negatives (active) | {domain_counts['negatives']:,} |",
         "",
-        "## Per-source counts",
+        "## Per-source counts (Original Active Images)",
         "",
-        "| Source | Images |",
-        "|--------|--------|",
+        "| Source | Images | Domain |",
+        "|--------|--------|--------|",
     ]
     for src, cnt in sorted(source_counts.items(), key=lambda x: -x[1]):
-        lines.append(f"| {src} | {cnt:,} |")
+        dom = "lab" if src == "plantvillage" else ("negatives" if "negatives" in src else "field")
+        lines.append(f"| {src} | {cnt:,} | {dom} |")
 
     lines += [
         "",
-        "## Per-class counts (canonical labels)",
+        "## Per-class counts (canonical labels, Active Images)",
         "",
-        "| Class | Count | Crop | Domain guess |",
-        "|-------|-------|------|--------------|",
+        "| Canonical Class | Total | Crop | Field Images | Lab Images |",
+        "|-----------------|-------|------|--------------|------------|",
     ]
     for lbl, cnt in sorted(label_counts.items(), key=lambda x: -x[1]):
         crop = canonical_crop(lbl)
-        # Rough domain breakdown per label
-        field_cnt = sum(1 for r in records if r["canonical"] == lbl and r["domain"] == "field")
-        lines.append(f"| {lbl} | {cnt:,} | {crop} | field:{field_cnt} lab:{cnt-field_cnt} |")
+        field_cnt = sum(1 for r in active_records if r["canonical"] == lbl and r["domain"] == "field")
+        lab_cnt = sum(1 for r in active_records if r["canonical"] == lbl and r["domain"] == "lab")
+        lines.append(f"| `{lbl}` | {cnt:,} | {crop} | {field_cnt:,} | {lab_cnt:,} |")
 
     lines += [
         "",
-        "## Imbalance",
+        "## Imbalance Analysis",
         "",
     ]
-    if label_counts:
-        max_cls = max(label_counts, key=label_counts.get)  # type: ignore[arg-type]
-        min_cls = min(label_counts, key=label_counts.get)  # type: ignore[arg-type]
+    leaf_classes = {k: v for k, v in label_counts.items() if k != "unknown"}
+    if leaf_classes:
+        max_cls = max(leaf_classes, key=leaf_classes.get)  # type: ignore[arg-type]
+        min_cls = min(leaf_classes, key=leaf_classes.get)  # type: ignore[arg-type]
+        ratio = leaf_classes[max_cls] / max(1, leaf_classes[min_cls])
         lines += [
-            f"- Largest class: `{max_cls}` ({label_counts[max_cls]:,} images)",
-            f"- Smallest class: `{min_cls}` ({label_counts[min_cls]:,} images)",
-            f"- Ratio: {label_counts[max_cls] / max(1, label_counts[min_cls]):.1f}×",
+            f"- Largest plant class: `{max_cls}` ({leaf_classes[max_cls]:,} images)",
+            f"- Smallest plant class: `{min_cls}` ({leaf_classes[min_cls]:,} images)",
+            f"- Class imbalance ratio: {ratio:.1f}x",
+            f"- Negatives / Unknown count: {label_counts.get('unknown', 0):,} images",
         ]
 
     return "\n".join(lines)
@@ -175,7 +190,6 @@ def main() -> None:
 
     all_records: list[dict] = []
 
-    # Each sub-folder of data/raw is treated as a separate dataset (source)
     for dataset_dir in sorted(data_root.iterdir()):
         if not dataset_dir.is_dir():
             continue

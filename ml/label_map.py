@@ -70,6 +70,33 @@ RAW_TO_CANONICAL: dict[str, str] = {
     # ── PlantVillage — Squash ──────────────────────────────────────────────
     "Squash___Powdery_mildew": "squash___powdery_mildew",
 
+    # ── External datasets — Onion ─────────────────────────────────────────
+    "Onion___Healthy": "onion___healthy",
+    "Onion___Anthracnose": "onion___anthracnose",
+    "Onion___Iris_Yellow_Spot_Virus": "onion___iris_yellow_spot_virus",
+    "Onion___Purple_Blotch": "onion___purple_blotch",
+    "Onion___Stemphylium_Blight": "onion___stemphylium_blight",
+
+    # ── External datasets — Eggplant ──────────────────────────────────────
+    "Eggplant___Healthy": "eggplant___healthy",
+    "Eggplant___Little_Leaf_Disease": "eggplant___little_leaf_disease",
+    "Eggplant___Cercospora_Leaf_Spot": "eggplant___cercospora_leaf_spot",
+    "Eggplant___Mosaic_Virus": "eggplant___mosaic_virus",
+    "Eggplant___White_Mold": "eggplant___white_mold",
+
+    # ── External datasets — Peas / Beans ──────────────────────────────────
+    "Bean___Healthy": "beans___healthy",
+    "Bean___Angular_Leaf_Spot": "beans___angular_leaf_spot",
+    "Bean___Bean_Rust": "beans___bean_rust",
+    "Pea___Healthy": "peas___healthy",
+    "Pea___Powdery_Mildew": "peas___powdery_mildew",
+
+    # ── Corn/Maize aliases ─────────────────────────────────────────────────
+    "corn_healthy": "maize___healthy",
+    "corn_common_rust": "maize___common_rust",
+    "corn_gray_leaf_spot": "maize___gray_leaf_spot",
+    "corn_northern_leaf_blight": "maize___northern_leaf_blight",
+
     # ── PlantVillage — Peach (not priority, but included if data sufficient)
     "Peach___Bacterial_spot": "peach___bacterial_spot",
     "Peach___healthy": "peach___healthy",

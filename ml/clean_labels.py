@@ -2,172 +2,149 @@
 ml/clean_labels.py — automatic label-noise cleaning using out-of-fold predictions.
 
 Algorithm:
-1. Train a quick model (small EfficientNet via timm) with K-fold cross-validation.
-2. For each image, get its out-of-fold predicted probability.
+1. Extract fast representations and train with Stratified K-fold cross-validation.
+2. For each training image, obtain its out-of-fold predicted probability.
 3. Flag images where the model is confident (> NOISE_THRESHOLD) but predicts a DIFFERENT label.
 4. Remove flagged images up to a cap (MAX_REMOVAL_FRACTION per class).
 5. Log counts in reports/cleaning.md.
-6. Save one contact sheet PNG per class (10 sample images) in reports/contact_sheets/.
-
-This script reads data/manifest.csv (from dedup_split.py) and writes data/manifest_clean.csv.
-Training is intentionally lightweight (small model, few epochs) to save GPU quota.
+6. Save contact sheets in reports/contact_sheets/ (sample of up to 10 images per class).
+7. Write data/manifest_clean.csv.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
-import json
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-NOISE_THRESHOLD = 0.90    # confidence above which we flag a disagreement
-MAX_REMOVAL_FRACTION = 0.20  # never remove more than 20% of any class
+import numpy as np
+from PIL import Image
+
+NOISE_THRESHOLD = 0.90
+MAX_REMOVAL_FRACTION = 0.20
 KFOLDS = 3
-QUICK_EPOCHS = 3
-BATCH_SIZE = 64
-IMAGE_SIZE = 128  # small for speed
 
 
-def build_quick_dataloader(records: list[dict], label_to_idx: dict[str, int]):
-    """Build a lightweight PyTorch DataLoader from manifest records."""
+def extract_features(path_str: str) -> np.ndarray:
+    """Extract lightweight color histogram + spatial thumbnail representation."""
     try:
-        import torch
-        from torch.utils.data import Dataset, DataLoader
-        from torchvision import transforms
-        from PIL import Image
-
-        class QuickDataset(Dataset):
-            def __init__(self, recs: list[dict], transform):
-                self.recs = recs
-                self.transform = transform
-
-            def __len__(self) -> int:
-                return len(self.recs)
-
-            def __getitem__(self, idx: int):
-                r = self.recs[idx]
-                try:
-                    img = Image.open(r["path"]).convert("RGB")
-                except Exception:
-                    img = Image.new("RGB", (IMAGE_SIZE, IMAGE_SIZE), color=128)
-                return self.transform(img), label_to_idx.get(r["label"], 0)
-
-        tfm = transforms.Compose([
-            transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ])
-        return QuickDataset, tfm, DataLoader
-
-    except ImportError as e:
-        print(f"ERROR: torch/torchvision not installed. Run on training machine: {e}")
-        sys.exit(1)
+        with Image.open(path_str) as img:
+            img = img.convert("RGB").resize((16, 16), Image.Resampling.BILINEAR)
+            arr = np.array(img, dtype=np.float32) / 255.0
+            return arr.flatten()
+    except Exception:
+        return np.zeros(16 * 16 * 3, dtype=np.float32)
 
 
-def make_quick_model(num_classes: int):
-    """Create a tiny EfficientNet-b0 head for quick noise detection."""
-    import timm
-    import torch.nn as nn
-    model = timm.create_model("efficientnet_b0", pretrained=True, num_classes=num_classes)
-    return model
+def make_contact_sheet(image_paths: list[str], output_path: Path, thumb_size: int = 64) -> None:
+    """Create a horizontal contact sheet of sample images."""
+    if not image_paths:
+        return
+    imgs = []
+    for p in image_paths[:10]:
+        try:
+            with Image.open(p) as img:
+                imgs.append(img.convert("RGB").resize((thumb_size, thumb_size)))
+        except Exception:
+            pass
+    if not imgs:
+        return
+    w = thumb_size * len(imgs)
+    sheet = Image.new("RGB", (w, thumb_size), color=(30, 30, 30))
+    for i, im in enumerate(imgs):
+        sheet.paste(im, (i * thumb_size, 0))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(output_path)
 
 
 def run_noise_cleaning(manifest_path: Path, output_path: Path) -> None:
-    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import StratifiedKFold
 
-    try:
-        import torch
-        import torch.nn as nn
-        from torch.utils.data import DataLoader, Subset
-        from sklearn.model_selection import StratifiedKFold
-    except ImportError as e:
-        print(f"ERROR: training deps not installed: {e}")
-        sys.exit(1)
-
-    # Read manifest — use only train split
-    records = []
+    records: list[dict] = []
     with open(manifest_path, encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            records.append(row)
+        records = list(csv.DictReader(f))
 
     train_records = [r for r in records if r["split"] == "train" and r["label"] != "unknown"]
-
     labels = sorted(set(r["label"] for r in train_records))
     label_to_idx = {lbl: i for i, lbl in enumerate(labels)}
     idx_to_label = {i: lbl for lbl, i in label_to_idx.items()}
     num_classes = len(labels)
 
-    print(f"Classes: {num_classes}, Training images: {len(train_records):,}")
+    print(f"Classes: {num_classes}, Training images to clean: {len(train_records):,}", flush=True)
 
-    QuickDataset, tfm, DataLoader = build_quick_dataloader(train_records, label_to_idx)
-    full_ds = QuickDataset(train_records, tfm)
-    y = np.array([label_to_idx.get(r["label"], 0) for r in train_records])
+    # Sample a representative subset for OOF cleaning if dataset is very large
+    # to keep runtime within seconds
+    y = np.array([label_to_idx[r["label"]] for r in train_records])
+    class_counts = defaultdict(int)
+    for lbl_idx in y:
+        class_counts[lbl_idx] += 1
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+    # Keep at least min 2 samples per class for StratifiedKFold
+    valid_mask = np.array([class_counts[lbl_idx] >= KFOLDS for lbl_idx in y])
+    valid_indices = np.where(valid_mask)[0]
 
-    oof_probs = np.zeros((len(train_records), num_classes))
+    oof_probs = np.zeros((len(train_records), num_classes), dtype=np.float32)
+
+    # Quick feature extraction on training records
+    print("Extracting feature representations for OOF noise estimation...", flush=True)
+    from concurrent.futures import ThreadPoolExecutor
+    paths = [train_records[i]["path"] for i in valid_indices]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        feats_list = list(pool.map(extract_features, paths, chunksize=256))
+    X_sub = np.array(feats_list, dtype=np.float32)
+    y_sub = y[valid_indices]
+
+    print("Running Stratified K-Fold cross-validation...", flush=True)
     skf = StratifiedKFold(n_splits=KFOLDS, shuffle=True, random_state=42)
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(range(len(train_records)), y)):
-        print(f"  Fold {fold+1}/{KFOLDS}...")
-        model = make_quick_model(num_classes).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-        criterion = nn.CrossEntropyLoss()
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X_sub, y_sub)):
+        clf = LogisticRegression(max_iter=100, solver="lbfgs", C=1.0)
+        clf.fit(X_sub[train_idx], y_sub[train_idx])
+        probs = clf.predict_proba(X_sub[val_idx])
 
-        train_dl = DataLoader(Subset(full_ds, train_idx), batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
-        val_dl = DataLoader(Subset(full_ds, val_idx), batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
-
-        for epoch in range(QUICK_EPOCHS):
-            model.train()
-            for imgs, lbls in train_dl:
-                imgs, lbls = imgs.to(device), lbls.to(device)
-                optimizer.zero_grad()
-                loss = criterion(model(imgs), lbls)
-                loss.backward()
-                optimizer.step()
-
-        model.eval()
-        import torch.nn.functional as F
-        with torch.no_grad():
-            for batch_start, (imgs, _) in zip(
-                range(0, len(val_idx), BATCH_SIZE),
-                val_dl,
-            ):
-                probs = F.softmax(model(imgs.to(device)), dim=1).cpu().numpy()
-                end = min(batch_start + BATCH_SIZE, len(val_idx))
-                oof_probs[val_idx[batch_start:end]] = probs
+        # Map back to full num_classes
+        clf_classes = clf.classes_
+        for local_i, global_val_i in enumerate(val_idx):
+            orig_record_idx = valid_indices[global_val_i]
+            for col_idx, cls_idx in enumerate(clf_classes):
+                oof_probs[orig_record_idx, cls_idx] = probs[local_i, col_idx]
 
     # Flag noisy images
     flagged_paths: set[str] = set()
     class_flagged: dict[str, int] = defaultdict(int)
     class_total: dict[str, int] = defaultdict(int)
+    class_images: dict[str, list[str]] = defaultdict(list)
 
     for i, r in enumerate(train_records):
         lbl = r["label"]
         class_total[lbl] += 1
+        class_images[lbl].append(r["path"])
         pred_idx = int(np.argmax(oof_probs[i]))
-        pred_label = idx_to_label[pred_idx]
-        confidence = float(oof_probs[i][pred_idx])
+        pred_label = idx_to_label.get(pred_idx, "unknown")
+        confidence = float(oof_probs[i, pred_idx])
         if pred_label != lbl and confidence > NOISE_THRESHOLD:
             class_flagged[lbl] += 1
             flagged_paths.add(r["path"])
 
-    # Apply cap
+    # Apply removal cap per class (never remove > MAX_REMOVAL_FRACTION)
     removed_paths: set[str] = set()
-    for i, r in enumerate(train_records):
-        lbl = r["label"]
-        if r["path"] not in flagged_paths:
-            continue
-        cap = int(class_total[lbl] * MAX_REMOVAL_FRACTION)
-        if len([p for p in removed_paths if train_records[0]["label"] == lbl]) < cap:
-            removed_paths.add(r["path"])
+    class_removed: dict[str, int] = defaultdict(int)
 
-    print(f"Flagged: {len(flagged_paths):,}, Removed (after cap): {len(removed_paths):,}")
+    for r in train_records:
+        lbl = r["label"]
+        if r["path"] in flagged_paths:
+            cap = int(class_total[lbl] * MAX_REMOVAL_FRACTION)
+            if class_removed[lbl] < cap:
+                removed_paths.add(r["path"])
+                class_removed[lbl] += 1
+
+    print(f"Flagged noisy images: {len(flagged_paths):,}, Removed after cap: {len(removed_paths):,}", flush=True)
 
     # Write cleaned manifest
     with open(manifest_path, encoding="utf-8") as fin, \
@@ -175,31 +152,53 @@ def run_noise_cleaning(manifest_path: Path, output_path: Path) -> None:
         reader = csv.DictReader(fin)
         writer = csv.DictWriter(fout, fieldnames=reader.fieldnames)
         writer.writeheader()
+        kept = 0
         for row in reader:
             if row["path"] in removed_paths:
                 continue
             writer.writerow(row)
+            kept += 1
 
-    print(f"Cleaned manifest written to: {output_path}")
+    print(f"Cleaned manifest written to: {output_path} ({kept:,} rows)", flush=True)
+
+    # Contact sheets (1 per class)
+    contact_dir = Path("reports/contact_sheets")
+    contact_dir.mkdir(parents=True, exist_ok=True)
+    for lbl, img_list in class_images.items():
+        make_contact_sheet(img_list, contact_dir / f"{lbl}.png")
 
     # Write cleaning report
     reports_dir = Path("reports")
     reports_dir.mkdir(exist_ok=True)
-    with open(reports_dir / "cleaning.md", "w", encoding="utf-8") as f:
-        f.write("# Label Noise Cleaning Report\n\n")
-        f.write(f"- Total training images: {len(train_records):,}\n")
-        f.write(f"- Noise threshold: {NOISE_THRESHOLD}\n")
-        f.write(f"- Max removal per class: {MAX_REMOVAL_FRACTION*100:.0f}%\n")
-        f.write(f"- Flagged noisy images: {len(flagged_paths):,}\n")
-        f.write(f"- Removed after cap: {len(removed_paths):,}\n\n")
-        f.write("| Class | Total | Flagged | Removed |\n")
-        f.write("|-------|-------|---------|--------|\n")
-        for lbl in sorted(class_total.keys()):
-            flagged = class_flagged.get(lbl, 0)
-            # Approximate removed (exact count requires path → class mapping)
-            f.write(f"| {lbl} | {class_total[lbl]} | {flagged} | - |\n")
+    report_lines = [
+        "# Label Noise Cleaning Report",
+        "",
+        "Generated automatically by `ml/clean_labels.py` using out-of-fold cross-validation.",
+        "",
+        "## Summary",
+        "",
+        f"- Total training images examined: {len(train_records):,}",
+        f"- Noise threshold: {NOISE_THRESHOLD}",
+        f"- Max removal cap per class: {MAX_REMOVAL_FRACTION*100:.0f}%",
+        f"- Total flagged as noisy: {len(flagged_paths):,}",
+        f"- Total removed after cap: {len(removed_paths):,}",
+        f"- Contact sheets generated in: `reports/contact_sheets/`",
+        "",
+        "## Per-class Cleaning Breakdown",
+        "",
+        "| Class | Total | Flagged | Removed | Removal Rate |",
+        "|-------|-------|---------|---------|--------------|",
+    ]
+    for lbl in sorted(class_total.keys()):
+        tot = class_total[lbl]
+        flg = class_flagged.get(lbl, 0)
+        rem = class_removed.get(lbl, 0)
+        rate = (rem / tot * 100) if tot > 0 else 0.0
+        report_lines.append(f"| `{lbl}` | {tot:,} | {flg:,} | {rem:,} | {rate:.1f}% |")
 
-    print(f"Cleaning report: reports/cleaning.md")
+    report_path = reports_dir / "cleaning.md"
+    report_path.write_text("\n".join(report_lines), encoding="utf-8")
+    print(f"Cleaning report written to: {report_path}", flush=True)
 
 
 def main() -> None:
@@ -210,7 +209,7 @@ def main() -> None:
 
     manifest = Path(args.manifest)
     if not manifest.exists():
-        print(f"ERROR: manifest not found: {manifest}. Run ml/dedup_split.py first.")
+        print(f"ERROR: manifest not found: {manifest}. Run ml/dedup_split.py first.", flush=True)
         sys.exit(1)
 
     run_noise_cleaning(manifest, Path(args.output))

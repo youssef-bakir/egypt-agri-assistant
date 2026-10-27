@@ -47,7 +47,7 @@ UNKNOWN_CLASS: str = "unknown"
 # ── Supported crops (inclusion rule applied in Step 3 — do not edit manually) ──
 # Each entry: "crop___condition"   (three underscores, as in PlantVillage naming)
 # This list is populated automatically by ml/inventory.py after cleaning.
-SUPPORTED_CLASSES: list[str] = []  # TODO: filled by Step 3
+SUPPORTED_CLASSES: list[str] = ['apple___apple_scab', 'apple___cedar_apple_rust', 'apple___healthy', 'blueberry___healthy', 'cherry___healthy', 'citrus___greening', 'cotton___disease', 'cotton___healthy', 'cucumber___downy_mildew', 'cucumber___healthy', 'cucumber___powdery_mildew', 'grape___black_rot', 'grape___healthy', 'maize___common_rust', 'maize___gray_leaf_spot', 'maize___northern_leaf_blight', 'mango___anthracnose', 'mango___bacterial_canker', 'mango___cutting_weevil', 'mango___die_back', 'mango___gall_midge', 'mango___healthy', 'mango___powdery_mildew', 'mango___sooty_mould', 'peach___healthy', 'pepper___bacterial_spot', 'pepper___healthy', 'potato___early_blight', 'potato___late_blight', 'raspberry___healthy', 'soybean___healthy', 'squash___powdery_mildew', 'strawberry___healthy', 'tomato___bacterial_spot', 'tomato___early_blight', 'tomato___healthy', 'tomato___late_blight', 'tomato___leaf_mold', 'tomato___mosaic_virus', 'tomato___septoria_leaf_spot', 'tomato___yellow_leaf_curl_virus']  # TODO: filled by Step 3
 
 # Egyptian priority crops (used to filter datasets in Step 2)
 PRIORITY_CROPS: list[str] = [

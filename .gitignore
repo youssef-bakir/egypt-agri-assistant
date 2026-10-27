@@ -36,9 +36,8 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
-# Data (large files — never commit raw datasets)
-data/raw/
-data/processed/
+# Data (large files — never commit data or raw datasets)
+data/
 *.zip
 *.tar.gz
 *.tar.bz2

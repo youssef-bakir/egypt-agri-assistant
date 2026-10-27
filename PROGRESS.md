@@ -19,7 +19,9 @@
 | Step 1 — Setup | ✅ Done | 2026-10-27 | Folder structure, config, requirements, venv, first commit |
 | Step 2 — Get the data | ✅ Done | 2026-10-27 | 10 datasets downloaded (82,379 active original images), label_map updated, inventory.md generated |
 | Step 3 — Clean and split | ✅ Done | 2026-10-27 | Near-dup dHash (71,140 groups), OOF cleaning (285 removed), inclusion rule (41 supported, 20 excluded), manifest_clean.csv |
-| Checkpoint A | 🏁 Reached | 2026-10-27 | docs/checkpoints/A.md produced with real numbers, tagged checkpoint-A |
+| Checkpoint A | ✅ Reached | 2026-10-27 | docs/checkpoints/A.md produced with real numbers, tagged checkpoint-A |
+| Step 4 — Shared preprocess & train script | ✅ Done | 2026-10-27 | ml/preprocess.py, ml/train.py (two-phase, domain balancing, label smoothing, timm), tests/test_train.py |
+| Step 5 — Train on Kaggle GPU | 🔄 In Progress | — | Automated Kaggle kernel push, smoke run, model training |
 
 ---
 

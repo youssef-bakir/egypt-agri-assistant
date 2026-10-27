@@ -1,0 +1,69 @@
+# Secrets & environment
+.env
+*.env
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Distribution
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (large files — never commit raw datasets)
+data/raw/
+data/processed/
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+
+# Model files > 50 MB (ONNX exported model, PyTorch checkpoints)
+models/*.onnx
+models/*.pt
+models/*.pth
+*.pth
+*.ckpt
+
+# Uploaded user photos (outside web root — still exclude in case)
+uploads/
+
+# Reports/generated images (large PNGs)
+reports/*.png
+reports/contact_sheets/
+
+# Kaggle
+kaggle.json
+
+# Logs
+logs/
+*.log
+
+# Joblib caches
+joblib_cache/
